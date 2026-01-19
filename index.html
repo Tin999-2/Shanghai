@@ -109,13 +109,11 @@
 <script>
     // --- 画面サイズ判定とスケール設定 ---
     let isMobile = window.innerWidth < 600;
-    // スマホならタイルを小さく、PCなら大きく
     let TILE_W = isMobile ? 36 : 54;
     let TILE_H = isMobile ? 48 : 74;
     let GAP_X = TILE_W + (isMobile ? 2 : 6);
     let GAP_Y = TILE_H + (isMobile ? 4 : 8);
 
-    // 盤面全体を中央寄せするためのオフセット計算
     function getOffsets() {
         const boardW = 8 * GAP_X;
         const boardH = 6 * GAP_Y;
@@ -125,17 +123,45 @@
         };
     }
 
-    // --- AUDIO / MATRIX (既存と同様) ---
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // --- AUDIO SYSTEM (音量を修正 & 安定化) ---
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+
     function playSound(type) {
-        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        // コンテキストがなければ作成
+        if (!audioCtx) audioCtx = new AudioContext();
+        // 停止していれば再開
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
         const now = audioCtx.currentTime;
-        if (type === 'select') { osc.frequency.setValueAtTime(880, now); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.05); }
-        else if (type === 'match') { osc.type = 'square'; osc.frequency.setValueAtTime(440, now); osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1); gain.gain.setValueAtTime(0.03, now); osc.start(); osc.stop(now + 0.1); }
-        else if (type === 'error') { osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.1); }
+
+        if (type === 'select') {
+            osc.frequency.setValueAtTime(880, now);
+            gain.gain.setValueAtTime(0.2, now); // 音量を少し上げました
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(); osc.stop(now + 0.1);
+        } else if (type === 'match') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(440, now);
+            osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+            gain.gain.setValueAtTime(0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(); osc.stop(now + 0.2);
+        } else if (type === 'error') {
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, now);
+            gain.gain.setValueAtTime(0.2, now);
+            gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+            osc.start(); osc.stop(now + 0.2);
+        }
     }
 
+    // --- MATRIX BG (既存と同様) ---
     const canvas = document.getElementById('matrix-bg');
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
@@ -215,19 +241,26 @@
     }
 
     function handleTileClick(tile) {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        // 音声の再生（各クリックで実行）
         const active = tilesData.filter(t => !t.removed);
-        if (!isSelectable(tile, active)) { playSound('error'); return; }
+        if (!isSelectable(tile, active)) { 
+            playSound('error'); 
+            return; 
+        }
 
         if (!selectedTile) {
-            tile.selected = true; selectedTile = tile; playSound('select');
+            tile.selected = true; selectedTile = tile; 
+            playSound('select');
         } else if (selectedTile.id === tile.id) {
-            tile.selected = false; selectedTile = null; playSound('select');
+            tile.selected = false; selectedTile = null; 
+            playSound('select');
         } else if (selectedTile.icon === tile.icon && selectedTile.color === tile.color) {
-            createParticles(selectedTile); createParticles(tile); playSound('match');
+            createParticles(selectedTile); createParticles(tile); 
+            playSound('match');
             tile.removed = selectedTile.removed = true; selectedTile = null; remaining -= 2;
         } else {
-            selectedTile.selected = false; tile.selected = true; selectedTile = tile; playSound('select');
+            selectedTile.selected = false; tile.selected = true; selectedTile = tile; 
+            playSound('select');
         }
         render();
     }
@@ -255,7 +288,10 @@
         const m = checkMoves();
         document.getElementById('counter').innerText = remaining;
         document.getElementById('moves').innerText = m;
-        if (remaining > 0 && m === 0) document.getElementById('fail-screen').style.display = 'flex';
+        if (remaining > 0 && m === 0) {
+            document.getElementById('fail-screen').style.display = 'flex';
+            playSound('error');
+        }
         if (remaining === 0) document.getElementById('complete-screen').style.display = 'flex';
     }
 
@@ -273,3 +309,4 @@
 </script>
 </body>
 </html>
+
