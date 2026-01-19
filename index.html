@@ -2,8 +2,8 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cyber Mahjong 64 - Final Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cyber Mahjong 64 - Mobile Sync</title>
     <style>
         :root {
             --bg-color: #020205;
@@ -17,37 +17,63 @@
         body {
             background-color: var(--bg-color); color: #fff;
             font-family: 'Consolas', monospace; margin: 0;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
             height: 100vh; overflow: hidden;
+            touch-action: manipulation; /* ダブルタップズーム防止 */
         }
         #matrix-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; opacity: 0.3; }
-        #ui { margin-bottom: 20px; font-size: 1.2rem; color: var(--color-1); text-shadow: 0 0 5px var(--color-1); }
-        #game-view { position: relative; width: 700px; height: 550px; perspective: 1200px; }
+        
+        #ui { 
+            margin-top: 20px;
+            margin-bottom: 10px; 
+            font-size: 0.9rem; 
+            color: var(--color-1); 
+            text-align: center;
+            width: 100%;
+            z-index: 1000;
+        }
+
+        /* ゲーム盤面の外枠 */
+        #game-view { 
+            position: relative; 
+            width: 100vw; 
+            height: 70vh; 
+            perspective: 1000px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
         #tile-container { position: absolute; width: 100%; height: 100%; z-index: 10; }
         #particle-container { position: absolute; width: 100%; height: 100%; z-index: 100; pointer-events: none; }
+
         .tile {
-            position: absolute; width: 54px; height: 74px;
+            position: absolute; 
+            /* サイズはJSで動的に決めるため、ここでは最小限のスタイルのみ */
             background: var(--tile-bg); border: 1px solid #333; border-radius: 4px;
             display: flex; align-items: center; justify-content: center;
-            cursor: pointer; transition: all 0.15s ease;
+            cursor: pointer; transition: transform 0.1s ease, filter 0.15s ease;
             box-sizing: border-box; filter: brightness(0.5);
-            box-shadow: 3px 3px 8px rgba(0,0,0,0.8); backdrop-filter: blur(2px);
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.8); backdrop-filter: blur(2px);
         }
         .tile.selected {
-            filter: brightness(1.3) !important; border: 2px solid white;
-            box-shadow: 0 0 25px var(--glow-color), inset 0 0 10px var(--glow-color);
-            transform: translateZ(25px) scale(1.05); z-index: 1000 !important;
+            filter: brightness(1.3) !important; border: 1.5px solid white;
+            box-shadow: 0 0 15px var(--glow-color);
+            z-index: 1000 !important;
         }
-        .tile svg { width: 38px; height: 38px; pointer-events: none; }
+        .tile svg { width: 80%; height: 80%; pointer-events: none; }
+
+        /* パーティクル */
         .particle {
-            position: absolute; width: 6px; height: 6px; border-radius: 50%;
+            position: absolute; width: 4px; height: 4px; border-radius: 50%;
             background-color: var(--p-color);
-            animation: explode 0.7s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+            animation: explode 0.6s ease-out forwards;
         }
         @keyframes explode {
             0% { transform: translate(0, 0) scale(1.5); opacity: 1; }
             100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
         }
+
         .overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.9); display: none;
@@ -55,69 +81,76 @@
         }
         .btn {
             background: none; border: 1px solid var(--color-1); color: var(--color-1);
-            padding: 15px 40px; font-size: 1.2rem; cursor: pointer; margin-top: 30px;
+            padding: 12px 30px; font-size: 1rem; cursor: pointer; margin-top: 20px;
         }
     </style>
 </head>
 <body>
 
 <canvas id="matrix-bg"></canvas>
-<div id="ui">Node_Status: <span id="counter">64</span> / 64 Pairs_Available: <span id="moves">?</span></div>
+<div id="ui">
+    STATUS: <span id="counter">64</span>/64<br>
+    MOVES: <span id="moves">?</span>
+</div>
 <div id="game-view">
     <div id="tile-container"></div>
     <div id="particle-container"></div>
 </div>
 
 <div id="complete-screen" class="overlay">
-    <h1 style="color: var(--color-2); font-size: 3rem;">COMPLETE</h1>
+    <h1 style="color: var(--color-2);">COMPLETE</h1>
     <button class="btn" onclick="location.reload()">REBOOT</button>
 </div>
 <div id="fail-screen" class="overlay">
-    <h1 style="color: var(--danger); font-size: 3rem;">CRITICAL ERROR</h1>
-    <button class="btn" onclick="location.reload()">RESTART SYSTEM</button>
+    <h1 style="color: var(--danger);">FAIL</h1>
+    <button class="btn" onclick="location.reload()">RESTART</button>
 </div>
 
 <script>
-    // --- AUDIO SYSTEM ---
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    function playSound(type) {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
-        const now = audioCtx.currentTime;
-        if (type === 'select') {
-            osc.frequency.setValueAtTime(880, now);
-            gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
-            osc.start(); osc.stop(now + 0.1);
-        } else if (type === 'match') {
-            osc.type = 'square'; osc.frequency.setValueAtTime(440, now);
-            osc.frequency.exponentialRampToValueAtTime(1760, now + 0.2);
-            gain.gain.setValueAtTime(0.05, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
-            osc.start(); osc.stop(now + 0.2);
-        } else if (type === 'error') {
-            osc.type = 'sawtooth'; osc.frequency.setValueAtTime(220, now);
-            gain.gain.setValueAtTime(0.1, now); gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
-            osc.start(); osc.stop(now + 0.2);
-        }
+    // --- 画面サイズ判定とスケール設定 ---
+    let isMobile = window.innerWidth < 600;
+    // スマホならタイルを小さく、PCなら大きく
+    let TILE_W = isMobile ? 36 : 54;
+    let TILE_H = isMobile ? 48 : 74;
+    let GAP_X = TILE_W + (isMobile ? 2 : 6);
+    let GAP_Y = TILE_H + (isMobile ? 4 : 8);
+
+    // 盤面全体を中央寄せするためのオフセット計算
+    function getOffsets() {
+        const boardW = 8 * GAP_X;
+        const boardH = 6 * GAP_Y;
+        return {
+            x: (window.innerWidth - boardW) / 2,
+            y: (window.innerHeight * 0.7 - boardH) / 2
+        };
     }
 
-    // --- MATRIX BG ---
+    // --- AUDIO / MATRIX (既存と同様) ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playSound(type) {
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+        if (type === 'select') { osc.frequency.setValueAtTime(880, now); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.05); }
+        else if (type === 'match') { osc.type = 'square'; osc.frequency.setValueAtTime(440, now); osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1); gain.gain.setValueAtTime(0.03, now); osc.start(); osc.stop(now + 0.1); }
+        else if (type === 'error') { osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, now); gain.gain.setValueAtTime(0.05, now); osc.start(); osc.stop(now + 0.1); }
+    }
+
     const canvas = document.getElementById('matrix-bg');
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿ';
-    const fontSize = 16;
-    const rainDrops = Array.from({length: canvas.width/fontSize}).map(() => 1);
+    const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZｱｲｳｴｵｶｷｸｹｺ';
+    const rainDrops = Array.from({length: Math.floor(canvas.width/16)}).map(() => 1);
     function drawMatrix() {
-        ctx.fillStyle = 'rgba(2, 2, 5, 0.05)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#0F6'; ctx.font = fontSize + 'px monospace';
+        ctx.fillStyle = 'rgba(2, 2, 5, 0.1)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#0F6'; ctx.font = '16px monospace';
         rainDrops.forEach((y, i) => {
-            ctx.fillText(alphabet[Math.floor(Math.random()*alphabet.length)], i*fontSize, y*fontSize);
-            if(y*fontSize > canvas.height && Math.random() > 0.975) rainDrops[i] = 0;
+            ctx.fillText(alphabet[Math.floor(Math.random()*alphabet.length)], i*16, y*16);
+            if(y*16 > canvas.height && Math.random() > 0.975) rainDrops[i] = 0;
             rainDrops[i]++;
         });
     }
-    setInterval(drawMatrix, 30);
+    setInterval(drawMatrix, 50);
 
     // --- GAME LOGIC ---
     const PATH_LIST = ["M12 2L2 19h20L12 2z", "M3 3h18v18H3V3z", "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3 1.2-6.9-5-4.9 6.9-1L12 2z", "M12 1L3 5v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V5l-9-4z", "M13 2L3 14h9l-1 9 10-12h-9l1-9z", "M12 2c-4 0-8 3.6-8 8 0 5.4 8 12 8 12s8-6.6 8-12c0-4.4-3.6-8-8-8z", "M21 4H3v16h18V4zM5 18V6h14v12H5z", "M12 1l-9 9 9 9 9-9-9-9z", "M18 4l2 2-8 8-8-8 2-2 6 6 6-6z", "M4 4h7v7H4V4zm9 0h7v7h-7V4zm0 9h7v7h-7v-7zm-9 0h7v7H4v-7z", "M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 18c-4.4 0-8-3.6-8-8s3.6-8 8-8 8 3.6 8 8-3.6 8-8 8z", "M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z", "M11 7h2v2h-2V7zm0 4h2v6h-2v-6zm1-9C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm0 18c-4.4 0-8-3.6-8-8s3.6-8 8-8 8 3.6 8 8-3.6 8-8 8z", "M12 6v3l4-4-4-4v3c-4.4 0-8 3.6-8 8 0 1.5.4 2.9 1.1 4l1.4-1.4c-.4-.8-.6-1.7-.6-2.6 0-3.3 2.7-6 6-6z", "M13 3h-2v10h2V3zm4.8 1.5l-1.4 1.4C17.9 7.3 19 9.5 19 12c0 3.9-3.1 7-7 7s-7-3.1-7-7c0-2.5 1.1-4.7 2.6-6.1L6.2 4.5C4.3 6.4 3 9.1 3 12c0 5 4 9 9 9s9-4 9-9c0-2.9-1.3-5.6-3.2-7.5z"];
@@ -126,11 +159,11 @@
 
     function isSelectable(tile, currentTiles) {
         const {x, y, z} = tile;
-        const onTop = currentTiles.some(t => t.z > z && Math.abs(t.x - x) < 0.8 && Math.abs(t.y - y) < 0.8);
+        const onTop = currentTiles.some(t => t.z > z && Math.abs(t.x - x) < 0.7 && Math.abs(t.y - y) < 0.7);
         if (onTop) return false;
-        const leftBlocked = currentTiles.some(t => t.z === z && t.x === x - 1 && t.y === y);
-        const rightBlocked = currentTiles.some(t => t.z === z && t.x === x + 1 && t.y === y);
-        return !leftBlocked || !rightBlocked;
+        const leftB = currentTiles.some(t => t.z === z && t.x === x - 1 && t.y === y);
+        const rightB = currentTiles.some(t => t.z === z && t.x === x + 1 && t.y === y);
+        return !leftB || !rightB;
     }
 
     function checkMoves() {
@@ -159,26 +192,25 @@
         while (tempSlots.length > 0) {
             let candidates = tempSlots.filter(s => isSelectable(s, tempSlots));
             if (candidates.length < 2) candidates = [tempSlots[0], tempSlots[1]];
-            for (let i = 0; i < 2; i++) {
-                let slot = candidates.splice(Math.floor(Math.random()*candidates.length), 1)[0];
-                tempSlots = tempSlots.filter(s => s !== slot);
-                const pattern = pool.splice(Math.floor(Math.random()*pool.length), 1)[0];
-                board.push({ ...slot, icon: pattern.d, color: pattern.c, id: board.length, removed: false });
-            }
+            let slot = candidates.splice(Math.floor(Math.random()*candidates.length), 1)[0];
+            tempSlots = tempSlots.filter(s => s !== slot);
+            const pattern = pool.splice(Math.floor(Math.random()*pool.length), 1)[0];
+            board.push({ ...slot, icon: pattern.d, color: pattern.c, id: board.length, removed: false });
         }
         return board;
     }
 
     function createParticles(tile) {
-        const x = tile.x * 60 + 100 + (tile.z * 5) + 27;
-        const y = tile.y * 80 + 40 - (tile.z * 5) + 37;
-        const container = document.getElementById('particle-container');
-        for (let i = 0; i < 15; i++) {
+        const offsets = getOffsets();
+        const px = tile.x * GAP_X + offsets.x + TILE_W/2 + (tile.z * 4);
+        const py = tile.y * GAP_Y + offsets.y + TILE_H/2 - (tile.z * 4);
+        const pContainer = document.getElementById('particle-container');
+        for (let i = 0; i < 10; i++) {
             const p = document.createElement('div'); p.className = 'particle';
-            p.style.setProperty('--p-color', tile.color); p.style.left = x + 'px'; p.style.top = y + 'px';
-            const a = Math.random()*Math.PI*2; const d = Math.random()*100+50;
+            p.style.setProperty('--p-color', tile.color); p.style.left = px + 'px'; p.style.top = py + 'px';
+            const a = Math.random()*Math.PI*2; const d = Math.random()*50+20;
             p.style.setProperty('--dx', Math.cos(a)*d+'px'); p.style.setProperty('--dy', Math.sin(a)*d+'px');
-            container.appendChild(p); setTimeout(() => p.remove(), 700);
+            pContainer.appendChild(p); setTimeout(() => p.remove(), 600);
         }
     }
 
@@ -203,22 +235,38 @@
     function render() {
         const container = document.getElementById('tile-container');
         container.innerHTML = '';
+        const offsets = getOffsets();
+
         tilesData.forEach(tile => {
             if (tile.removed) return;
-            const el = document.createElement('div'); el.className = `tile ${tile.selected ? 'selected' : ''}`;
-            el.style.left = (tile.x*60 + 100 + tile.z*5) + 'px';
-            el.style.top = (tile.y*80 + 40 - tile.z*5) + 'px';
-            el.style.zIndex = tile.z + 10; el.style.setProperty('--glow-color', tile.color);
+            const el = document.createElement('div');
+            el.className = `tile ${tile.selected ? 'selected' : ''}`;
+            el.style.width = TILE_W + 'px';
+            el.style.height = TILE_H + 'px';
+            el.style.left = (tile.x * GAP_X + offsets.x + tile.z * 4) + 'px';
+            el.style.top = (tile.y * GAP_Y + offsets.y - tile.z * 4) + 'px';
+            el.style.zIndex = tile.z + 10;
+            el.style.setProperty('--glow-color', tile.color);
             el.innerHTML = `<svg viewBox="0 0 24 24"><path d="${tile.icon}" fill="${tile.color}"></path></svg>`;
             el.onclick = () => handleTileClick(tile);
             container.appendChild(el);
         });
+
         const m = checkMoves();
         document.getElementById('counter').innerText = remaining;
         document.getElementById('moves').innerText = m;
-        if (remaining > 0 && m === 0) { document.getElementById('fail-screen').style.display = 'flex'; playSound('error'); }
+        if (remaining > 0 && m === 0) document.getElementById('fail-screen').style.display = 'flex';
         if (remaining === 0) document.getElementById('complete-screen').style.display = 'flex';
     }
+
+    window.addEventListener('resize', () => {
+        isMobile = window.innerWidth < 600;
+        TILE_W = isMobile ? 36 : 54;
+        TILE_H = isMobile ? 48 : 74;
+        GAP_X = TILE_W + (isMobile ? 2 : 6);
+        GAP_Y = TILE_H + (isMobile ? 4 : 8);
+        render();
+    });
 
     tilesData = generateBoard();
     render();
